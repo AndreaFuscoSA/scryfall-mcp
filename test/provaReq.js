@@ -1,4 +1,4 @@
-import { scryfallGet } from "../scryfall.js";
+import { scryfallGet } from "../modules/scryfall.js";
 
 
 // 1. Una carta per nome esatto

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { scryfallGet } from "./scryfall.js";
-import { validaMazzo, REGOLE } from "./validazione.js";
+import { scryfallGet } from "../modules/scryfall.js";
+import { validaMazzo, REGOLE } from "../modules/validazione.js";
 
 export function createServer() {
   const server = new McpServer({ name: "scryfall", version: "0.1.0" });

@@ -1,5 +1,5 @@
-import { parseMazzo } from "../mazzo.js";
-import { recuperaCarte } from "../scryfall.js";
+import { parseMazzo } from "../modules/mazzo.js";
+import { recuperaCarte } from "../modules/scryfall.js";
 
 const lista = `Deck
 4 Lightning Bolt (STA) 42

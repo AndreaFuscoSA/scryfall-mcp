@@ -1,4 +1,4 @@
-import { parseMazzo } from "../mazzo.js";
+import { parseMazzo } from "../modules/mazzo.js";
 
 const lista = `Deck
 4 Lightning Bolt (STA) 42
