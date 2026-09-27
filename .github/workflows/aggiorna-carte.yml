@@ -1,0 +1,46 @@
+name: Aggiorna carte
+
+on:
+  schedule:
+    # Ogni giorno alle 10:30 UTC (12:30 in Italia con l'ora legale).
+    # Scryfall aggiorna il file verso le 09:00 e le 21:00 UTC.
+    - cron: "30 10 * * *"
+  # Permette di lanciarlo a mano dalla scheda Actions di GitHub.
+  workflow_dispatch:
+
+# Mai due esecuzioni contemporanee (per esempio una manuale e una programmata):
+# la seconda aspetta che la prima finisca.
+concurrency:
+  group: aggiorna-carte
+  cancel-in-progress: false
+
+jobs:
+  aggiorna:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installa le dipendenze
+        run: npm ci
+
+      - name: Scarica il file di Scryfall
+        run: node scaricaBulk.js
+
+      - name: Leggi gli hash dal database remoto
+        run: npx wrangler d1 execute scryfall-cards --remote --json --command="SELECT oracle_id, hash FROM carte" > hash-attuali.json
+
+      - name: Calcola le differenze
+        run: node aggiorna.js
+
+      - name: Applica le differenze
+        if: hashFiles('delta.sql') != ''
+        run: npx wrangler d1 execute scryfall-cards --remote --file=delta.sql
