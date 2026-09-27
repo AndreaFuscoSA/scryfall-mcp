@@ -1,55 +1,106 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { scryfallGet } from "../modules/scryfall.js";
 import { validaMazzo, REGOLE } from "../modules/validazione.js";
+import { trovaCartePerNome, cercaCarte } from "../modules/carte-db.js";
 
-export function createServer() {
-  const server = new McpServer({ name: "scryfall", version: "0.1.0" });
-  const AVVISO_FREQUENZA =
-  " Scryfall limita la frequenza delle richieste: chiama i tool di questo connettore " +
-  "uno alla volta, mai in parallelo. Per verificare più carte insieme usa valida_mazzo, " +
-  "che le controlla tutte con una sola richiesta.";
+// Costo di mana da mostrare in un elenco. Le carte a più facce non hanno
+// il costo "in cima": lo prendiamo dalle facce ("{1}{W} // {1}{G}{W}{U}").
+// Le reversible_card hanno due facce identiche: ne basta una.
+function costoDiMana(card) {
+  if (card.mana_cost) return card.mana_cost;
+  if (!card.card_faces) return "";
+  const facce = card.layout === "reversible_card" ? card.card_faces.slice(0, 1) : card.card_faces;
+  return facce.map((f) => f.mana_cost).filter(Boolean).join(" // ");
+}
+
+// Testo leggibile di una carta per dettagli_carta.
+// Le carte a più facce (split, avventure, modal_dfc, transform...) non hanno
+// testo e costo "in cima": stanno dentro card_faces, faccia per faccia.
+// Le reversible_card hanno due facce identiche: ne mostriamo una sola.
+function descriviCarta(card, formati) {
+  const costo = (c) => (c.mana_cost ? ` — ${c.mana_cost}` : "");
+  const righe = [`${card.name}${costo(card)}`, `Layout: ${card.layout}`];
+
+  if (card.card_faces) {
+    const facce = card.layout === "reversible_card" ? card.card_faces.slice(0, 1) : card.card_faces;
+    for (const faccia of facce) {
+      righe.push(
+        "",
+        `Faccia: ${faccia.name}${costo(faccia)}`,
+        `Tipo: ${faccia.type_line ?? ""}`,
+        `Testo: ${faccia.oracle_text ?? ""}`,
+      );
+    }
+  } else {
+    righe.push(`Tipo: ${card.type_line}`, `Testo: ${card.oracle_text ?? ""}`);
+  }
+
+  righe.push("", "Legalità:", ...formati.map((f) => `- ${f}: ${card.legalities[f] ?? "sconosciuta"}`));
+  return righe.join("\n");
+}
+
+export function createServer({ db } = {}) {
+  // Fail closed: senza database i tool non possono funzionare, meglio
+  // fermarsi subito con un messaggio chiaro che fallire più tardi a metà
+  // di una chiamata. Succede per esempio avviando server.js via stdio,
+  // che non ha accesso al binding D1.
+  if (!db) {
+    throw new Error("createServer richiede { db }: il binding D1 non è stato passato");
+  }
+
+  const server = new McpServer({ name: "scryfall", version: "0.3.0" });
 
   const FORMATI_ARENA = Object.keys(REGOLE);
+  const COLORE = z.enum(["W", "U", "B", "R", "G"]);
 
   server.registerTool(
     "cerca_carte",
     {
       description:
-        "Cerca carte di Magic: The Gathering su Scryfall usando la sua sintassi di ricerca " +
-        "(es. 't:dragon c<=R mv<=4', 'o:\"draw a card\" t:instant'). " +
-        "Per default restituisce solo carte disponibili su MTG Arena. " +
-        "Se indichi un formato, restituisce solo carte legali in quel formato. " +
-        "Usalo prima di suggerire carte per un mazzo, per verificare che esistano e siano giocabili." +
-        AVVISO_FREQUENZA,
+        "Cerca carte di Magic: The Gathering giocabili su MTG Arena con filtri strutturati. " +
+        "Tutti i filtri sono facoltativi e si combinano tra loro (devono valere tutti). " +
+        "nome, tipo e testo cercano una parte del testo, senza distinguere maiuscole e minuscole, in inglese. " +
+        "Colori: W bianco, U blu, B nero, R rosso, G verde. " +
+        "Usalo prima di suggerire carte per un mazzo, invece di proporle a memoria.",
       inputSchema: z.object({
-        query: z.string().min(1).describe("Query in sintassi Scryfall"),
+        nome: z.string().min(1).optional().describe("Parte del nome, es. 'Bolt'"),
+        tipo: z.string().min(1).optional().describe("Parte della riga del tipo, es. 'Creature', 'Dragon', 'Legendary Enchantment'"),
+        testo: z.string().min(1).optional().describe("Parte del testo delle regole, es. 'draw a card'"),
+        colori: z.array(COLORE).optional()
+          .describe("La carta deve avere almeno questi colori, es. ['R'] per le carte rosse (anche multicolore)"),
+        identita_entro: z.array(COLORE).optional()
+          .describe("L'identità di colore deve essere contenuta in questi colori, come per un comandante Brawl; [] = solo carte incolori"),
+        cmc_min: z.number().min(0).optional().describe("Costo di mana convertito minimo"),
+        cmc_max: z.number().min(0).optional().describe("Costo di mana convertito massimo"),
         formato: z.enum(FORMATI_ARENA).optional().describe("Formato in cui le carte devono essere legali"),
-        solo_arena: z.boolean().default(true).describe("Se true, solo carte disponibili su MTG Arena"),
         max_risultati: z.number().int().min(1).max(50).default(20),
       }),
     },
-    async ({ query, formato, solo_arena, max_risultati }) => {
-      let q = `(${query})`;
-      if (solo_arena) q += " game:arena";
-      if (formato) q += ` legal:${formato}`;
-
+    async (filtri) => {
       try {
-        const risultati = await scryfallGet("/cards/search", { q, order: "name" });
+        const { totale, carte } = await cercaCarte(db, {
+          nome: filtri.nome,
+          tipo: filtri.tipo,
+          testo: filtri.testo,
+          colori: filtri.colori,
+          identitaEntro: filtri.identita_entro,
+          cmcMin: filtri.cmc_min,
+          cmcMax: filtri.cmc_max,
+          formato: filtri.formato,
+          maxRisultati: filtri.max_risultati,
+        });
 
-        const righe = risultati.data
-          .slice(0, max_risultati)
-          .map((c) => `${c.name} ${c.mana_cost ?? ""} — ${c.type_line}`);
+        if (totale === 0) {
+          return { content: [{ type: "text", text: `Nessuna carta giocabile su Arena con questi filtri: ${JSON.stringify(filtri)}` }] };
+        }
 
-        const intestazione = `Trovate ${risultati.total_cards} carte (query: ${q}). Ne mostro ${righe.length}.`;
+        const righe = carte.map((c) => `${c.name} ${costoDiMana(c)} — ${c.type_line}`);
+        const intestazione =
+          `${totale === 1 ? "Trovata 1 carta" : `Trovate ${totale} carte`} ` +
+          `(filtri: ${JSON.stringify(filtri)}). Ne mostro ${righe.length}.`;
 
         return { content: [{ type: "text", text: [intestazione, "", ...righe].join("\n") }] };
       } catch (err) {
-        if (err.status === 404) {
-            return {
-              content: [{ type: "text", text: `Nessuna carta trovata per: ${q}\nRisposta di Scryfall: ${err.message}` }],
-            };
-          }
         return { content: [{ type: "text", text: err.message }], isError: true };
       }
     }
@@ -62,8 +113,7 @@ export function createServer() {
         "Valida una lista di mazzo per MTG Arena, nel formato di export di Arena (es. '4 Lightning Bolt (STA) 42'). " +
         "Controlla che ogni carta esista e sia legale nel formato (quindi disponibile su Arena), " +
         "il numero di copie, il numero di carte e, nei formati Brawl, l'identità di colore del comandante. " +
-        "Usalo sempre prima di proporre una lista completa o modifiche a un mazzo." +
-        AVVISO_FREQUENZA,
+        "Usalo sempre prima di proporre una lista completa o modifiche a un mazzo.",
       inputSchema: z.object({
         lista: z.string().min(1).describe("Lista del mazzo, una carta per riga, con eventuali sezioni Deck, Sideboard, Commander"),
         formato: z.enum(FORMATI_ARENA).describe("Formato in cui validare il mazzo"),
@@ -71,7 +121,7 @@ export function createServer() {
     },
     async ({ lista, formato }) => {
       try {
-        const r = await validaMazzo(lista, formato);
+        const r = await validaMazzo(lista, formato, db);
         const incompleta = r.nonRiconosciute.length > 0 || r.nonTrovate.length > 0;
 
         let esito;
@@ -81,7 +131,13 @@ export function createServer() {
 
         const righe = [`Esito per ${formato}: ${esito} (${r.totaleMazzo} carte nel mazzo).`];
         if (r.problemi.length) righe.push("", "Problemi:", ...r.problemi.map((p) => `- ${p}`));
-        if (r.nonTrovate.length) righe.push("", "Carte non trovate su Scryfall:", ...r.nonTrovate.map((n) => `- ${n}`));
+        // Una carta non trovata resta "verifica incompleta", non "non valido":
+        // non sappiamo se il nome è sbagliato o se la carta non è su Arena.
+        if (r.nonTrovate.length) righe.push(
+          "",
+          "Carte non trovate tra quelle giocabili su Arena (nome non esatto, oppure carta non disponibile su Arena):",
+          ...r.nonTrovate.map((n) => `- ${n}`),
+        );
         if (r.nonRiconosciute.length) righe.push("", "Righe non riconosciute:", ...r.nonRiconosciute.map((n) => `- ${n}`));
 
         return { content: [{ type: "text", text: righe.join("\n") }] };
@@ -95,48 +151,35 @@ export function createServer() {
     "dettagli_carta",
     {
       description:
-        "Cerca una carta di Magic: The Gathering per nome su Scryfall e restituisce " +
-        "costo in mana, tipo, testo e legalità in Historic, Brawl, Competitive Brawl e Standard. " +
-        "Accetta nomi approssimativi o con piccoli errori di battitura." +
-        AVVISO_FREQUENZA,
+        "Cerca una carta di Magic: The Gathering giocabile su MTG Arena e restituisce costo in mana, " +
+        "tipo, testo (faccia per faccia per le carte a più facce) e legalità nei formati di Arena. " +
+        "Il nome deve essere esatto (maiuscole e minuscole non contano): il nome intero della carta " +
+        "oppure il nome di una sua faccia, es. 'Lightning Bolt', 'Life // Death', 'Peter Parker'.",
       inputSchema: z.object({
-        nome: z.string().min(1).describe("Nome della carta in inglese, es. 'Lightning Bolt'"),
+        nome: z.string().min(1).describe("Nome esatto della carta in inglese, o di una sua faccia"),
       }),
     },
     async ({ nome }) => {
       try {
-        // Accettiamo nomi approssimativi o con piccoli errori di battitura
-        // per esempio: "Lightnin Bolt" o "Lightning Bolt's"
-        const card = await scryfallGet("/cards/named", { fuzzy: nome });
+        const carte = await trovaCartePerNome(db, nome);
 
-        let suArena = "No";
-        try {
-          const onArena = await scryfallGet("/cards/search", { q: `!"${card.name}" game:arena` });
-          if (onArena) suArena = "Sì";
-        } catch (err) {
-            if (err.status === 404) {
-                suArena = "No";
-              } else {
-                console.error(err);
-                suArena = "Non verificabile (errore Scryfall)";
-              }
-        }
-        if (!card) {
-          return { content: [{ type: "text", text: "Carta non trovata" }], isError: true };
+        if (carte.length === 0) {
+          // "Non trovata" qui non vuol dire "non esiste": nel database ci sono
+          // solo le carte legali in almeno un formato Arena, e il nome deve
+          // essere esatto. Lo diciamo, invece di far credere a Claude che la
+          // carta non esista.
+          return {
+            content: [{
+              type: "text",
+              text:
+                `"${nome}" non trovata tra le carte giocabili su MTG Arena. ` +
+                "Può darsi che il nome non sia esatto, che la carta non sia su Arena, " +
+                "o che non sia legale in nessun formato di Arena.",
+            }],
+          };
         }
 
-        const testo = [
-          `${card.name} - ${card.mana_cost ?? ""}`,
-          `Tipo: ${card.type_line}`,
-          `Testo: ${card.oracle_text ?? ""}`,
-          `Presente su Arena: ${suArena}`,
-          "",
-          `Historic: ${card.legalities.historic}`,
-          `Brawl: ${card.legalities.brawl}`,
-          `Standard: ${card.legalities.standard}`,
-          `Competitive Brawl: ${card.legalities.competitivebrawl}`,
-        ].join("\n");
-
+        const testo = carte.map((card) => descriviCarta(card, FORMATI_ARENA)).join("\n\n---\n\n");
         return { content: [{ type: "text", text: testo }] };
       } catch (err) {
         return { content: [{ type: "text", text: err.message }], isError: true };

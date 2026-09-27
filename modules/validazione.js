@@ -1,5 +1,5 @@
 import { parseMazzo } from "./mazzo.js";
-import { recuperaCarte } from "./scryfall.js";
+import { trovaCartePerNomi } from "./carte-db.js";
 
 export const REGOLE = {
   standard: { maxCopie: 4, minCarte: 60 },
@@ -26,10 +26,11 @@ function copieIllimitate(card) {
     /any number of cards named/i.test(card.oracle_text ?? "");
 }
 
-export async function validaMazzo(testo, formato) {
+// db: il database D1 da cui leggere le carte (vedi carte-db.js).
+export async function validaMazzo(testo, formato, db) {
   const regole = REGOLE[formato];
   const { carte, nonRiconosciute } = parseMazzo(testo);
-  const { trovate, nonTrovate } = await recuperaCarte(carte.map((c) => c.nome));
+  const { trovate, nonTrovate } = await trovaCartePerNomi(db, carte.map((c) => c.nome));
   const indice = indicizza(trovate);
 
   const copiePerCarta = new Map();

@@ -1,5 +1,12 @@
 {
-    "name": "scryfall-mcp",
-    "main": "worker.js",
-    "compatibility_date": "2026-09-01"
-  }
+	"name": "scryfall-mcp",
+	"main": "worker.js",
+	"compatibility_date": "2026-09-01",
+	"d1_databases": [
+		{
+			"binding": "scryfall_cards",
+			"database_name": "scryfall-cards",
+			"database_id": "04bd1662-106f-4147-812e-6f697cdcac60"
+		}
+	]
+}
