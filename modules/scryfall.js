@@ -5,6 +5,14 @@ const HEADERS = {
 };
 
 async function gestisciRisposta(res) {
+    if (res.status === 429) {
+      const error = new Error(
+        "Scryfall ha applicato un limite di frequenza (429). " +
+        "Non riprovare prima di 60 secondi e non fare chiamate in parallelo a questo connettore."
+      );
+      error.status = 429;
+      throw error;
+    }
     const data = await res.json();
     if (!res.ok) {
       const avvisi = data.warnings?.length ? ` Avvisi: ${data.warnings.join(" ")}` : "";

@@ -5,6 +5,10 @@ import { validaMazzo, REGOLE } from "../modules/validazione.js";
 
 export function createServer() {
   const server = new McpServer({ name: "scryfall", version: "0.1.0" });
+  const AVVISO_FREQUENZA =
+  " Scryfall limita la frequenza delle richieste: chiama i tool di questo connettore " +
+  "uno alla volta, mai in parallelo. Per verificare più carte insieme usa valida_mazzo, " +
+  "che le controlla tutte con una sola richiesta.";
 
   const FORMATI_ARENA = Object.keys(REGOLE);
 
@@ -16,7 +20,8 @@ export function createServer() {
         "(es. 't:dragon c<=R mv<=4', 'o:\"draw a card\" t:instant'). " +
         "Per default restituisce solo carte disponibili su MTG Arena. " +
         "Se indichi un formato, restituisce solo carte legali in quel formato. " +
-        "Usalo prima di suggerire carte per un mazzo, per verificare che esistano e siano giocabili.",
+        "Usalo prima di suggerire carte per un mazzo, per verificare che esistano e siano giocabili." +
+        AVVISO_FREQUENZA,
       inputSchema: z.object({
         query: z.string().min(1).describe("Query in sintassi Scryfall"),
         formato: z.enum(FORMATI_ARENA).optional().describe("Formato in cui le carte devono essere legali"),
@@ -57,7 +62,8 @@ export function createServer() {
         "Valida una lista di mazzo per MTG Arena, nel formato di export di Arena (es. '4 Lightning Bolt (STA) 42'). " +
         "Controlla che ogni carta esista e sia legale nel formato (quindi disponibile su Arena), " +
         "il numero di copie, il numero di carte e, nei formati Brawl, l'identità di colore del comandante. " +
-        "Usalo sempre prima di proporre una lista completa o modifiche a un mazzo.",
+        "Usalo sempre prima di proporre una lista completa o modifiche a un mazzo." +
+        AVVISO_FREQUENZA,
       inputSchema: z.object({
         lista: z.string().min(1).describe("Lista del mazzo, una carta per riga, con eventuali sezioni Deck, Sideboard, Commander"),
         formato: z.enum(FORMATI_ARENA).describe("Formato in cui validare il mazzo"),
@@ -91,7 +97,8 @@ export function createServer() {
       description:
         "Cerca una carta di Magic: The Gathering per nome su Scryfall e restituisce " +
         "costo in mana, tipo, testo e legalità in Historic, Brawl, Competitive Brawl e Standard. " +
-        "Accetta nomi approssimativi o con piccoli errori di battitura.",
+        "Accetta nomi approssimativi o con piccoli errori di battitura." +
+        AVVISO_FREQUENZA,
       inputSchema: z.object({
         nome: z.string().min(1).describe("Nome della carta in inglese, es. 'Lightning Bolt'"),
       }),
