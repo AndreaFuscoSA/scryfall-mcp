@@ -4,19 +4,55 @@ const HEADERS = {
   "Accept": "application/json",
 };
 
+async function gestisciRisposta(res) {
+    const data = await res.json();
+    if (!res.ok) {
+      const avvisi = data.warnings?.length ? ` Avvisi: ${data.warnings.join(" ")}` : "";
+      const error = new Error(`Scryfall ${res.status}: ${data.details}${avvisi}`);
+      error.status = res.status;
+      throw error;
+    }
+    return data;
+  }
+
 export async function scryfallGet(path, params = {}) {
   const url = new URL(path, BASE_URL);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
   }
-
   const res = await fetch(url, { headers: HEADERS });
-  const data = await res.json();
+  return gestisciRisposta(res);
+}
 
-  if (!res.ok) {
-    const error = new Error(`Scryfall ${res.status}: ${data.details}`);
-    error.status = res.status;
-    throw error;
+export async function scryfallPost(path, body) {
+  const url = new URL(path, BASE_URL);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return gestisciRisposta(res);
+}
+
+const MAX_PER_RICHIESTA = 75;
+const pausa = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function recuperaCarte(nomi) {
+  const unici = [...new Set(nomi)];
+  const trovate = [];
+  const nonTrovate = [];
+
+  for (let i = 0; i < unici.length; i += MAX_PER_RICHIESTA) {
+    if (i > 0) await pausa(500);
+
+    const blocco = unici.slice(i, i + MAX_PER_RICHIESTA);
+    const risposta = await scryfallPost("/cards/collection", {
+      identifiers: blocco.map((nome) => ({ name: nome })),
+    });
+
+    trovate.push(...risposta.data);
+    nonTrovate.push(...risposta.not_found.map((id) => id.name));
   }
-  return data;
+
+  return { trovate, nonTrovate };
 }

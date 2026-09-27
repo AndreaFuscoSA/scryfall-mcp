@@ -2,11 +2,12 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { scryfallGet } from "./scryfall.js";
+import { validaMazzo, REGOLE } from "./validazione.js";
 
 function createServer() {
   const server = new McpServer({ name: "scryfall", version: "0.1.0" });
 
-  const FORMATI_ARENA = ["standard", "alchemy", "historic", "timeless", "brawl", "standardbrawl", "competitivebrawl", "modern", "legacy", "pauper", "vintage", "penny", "commander", "duel", "oldschool", "premodern"];
+  const FORMATI_ARENA = Object.keys(REGOLE);
 
   server.registerTool(
     "cerca_carte",
@@ -41,8 +42,45 @@ function createServer() {
         return { content: [{ type: "text", text: [intestazione, "", ...righe].join("\n") }] };
       } catch (err) {
         if (err.status === 404) {
-          return { content: [{ type: "text", text: `Nessuna carta trovata per: ${q}` }] };
-        }
+            return {
+              content: [{ type: "text", text: `Nessuna carta trovata per: ${q}\nRisposta di Scryfall: ${err.message}` }],
+            };
+          }
+        return { content: [{ type: "text", text: err.message }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "valida_mazzo",
+    {
+      description:
+        "Valida una lista di mazzo per MTG Arena, nel formato di export di Arena (es. '4 Lightning Bolt (STA) 42'). " +
+        "Controlla che ogni carta esista e sia legale nel formato (quindi disponibile su Arena), " +
+        "il numero di copie, il numero di carte e, nei formati Brawl, l'identità di colore del comandante. " +
+        "Usalo sempre prima di proporre una lista completa o modifiche a un mazzo.",
+      inputSchema: z.object({
+        lista: z.string().min(1).describe("Lista del mazzo, una carta per riga, con eventuali sezioni Deck, Sideboard, Commander"),
+        formato: z.enum(FORMATI_ARENA).describe("Formato in cui validare il mazzo"),
+      }),
+    },
+    async ({ lista, formato }) => {
+      try {
+        const r = await validaMazzo(lista, formato);
+        const incompleta = r.nonRiconosciute.length > 0 || r.nonTrovate.length > 0;
+
+        let esito;
+        if (r.problemi.length > 0) esito = "NON VALIDO";
+        else if (incompleta) esito = "VERIFICA INCOMPLETA: nessun problema trovato, ma alcune righe non sono state controllate";
+        else esito = "VALIDO";
+
+        const righe = [`Esito per ${formato}: ${esito} (${r.totaleMazzo} carte nel mazzo).`];
+        if (r.problemi.length) righe.push("", "Problemi:", ...r.problemi.map((p) => `- ${p}`));
+        if (r.nonTrovate.length) righe.push("", "Carte non trovate su Scryfall:", ...r.nonTrovate.map((n) => `- ${n}`));
+        if (r.nonRiconosciute.length) righe.push("", "Righe non riconosciute:", ...r.nonRiconosciute.map((n) => `- ${n}`));
+
+        return { content: [{ type: "text", text: righe.join("\n") }] };
+      } catch (err) {
         return { content: [{ type: "text", text: err.message }], isError: true };
       }
     }
@@ -85,7 +123,7 @@ function createServer() {
           `${card.name} - ${card.mana_cost ?? ""}`,
           `Tipo: ${card.type_line}`,
           `Testo: ${card.oracle_text ?? ""}`,
-          `Su Arena: ${suArena}`,
+          `Presente su Arena: ${suArena}`,
           "",
           `Historic: ${card.legalities.historic}`,
           `Brawl: ${card.legalities.brawl}`,
