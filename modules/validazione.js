@@ -3,7 +3,6 @@ import { trovaCartePerNomi } from "./carte-db.js";
 
 export const REGOLE = {
   standard: { maxCopie: 4, minCarte: 60 },
-  alchemy: { maxCopie: 4, minCarte: 60 },
   historic: { maxCopie: 4, minCarte: 60 },
   timeless: { maxCopie: 4, minCarte: 60 },
   brawl: { maxCopie: 1, carteEsatte: 100, richiedeComandante: true },
